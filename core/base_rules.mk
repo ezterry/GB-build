@@ -68,9 +68,23 @@ endif
 ifneq ($(filter-out user debug eng tests optional samples,$(LOCAL_MODULE_TAGS)),)
 $(warning unusual tags $(LOCAL_MODULE_TAGS) on $(LOCAL_MODULE) at $(LOCAL_PATH))
 endif
+#extra bypasses. . I need to find a cleaner spot for this
+EXTRA_GF_USER_MODULES := \
+      copybit.msm7k \
+      lights.msm7k \
+      gralloc.msm7k \
+      libboot_arch_armv6 \
+      libboot_arch_msm7k \
+      libboot \
+      libboot_c \
+      nandwrite \
+      usbloader \
+      tiwlan.ini \
+      wlan_loader \
+      libCustomWifi 
 
 ifneq ($(filter $(LOCAL_MODULE_TAGS),user),)
-  ifeq ($(filter $(GRANDFATHERED_USER_MODULES),$(LOCAL_MODULE)),)
+  ifeq ($(filter $(GRANDFATHERED_USER_MODULES) $(EXTRA_GF_USER_MODULES),$(LOCAL_MODULE)),)
     $(warning *** Module name: $(LOCAL_MODULE))
     $(warning *** Makefile location: $(LOCAL_PATH))
     $(warning * )
@@ -87,7 +101,7 @@ ifneq ($(filter $(LOCAL_MODULE_TAGS),user),)
     $(warning *    Android.mk for the affected module, and add)
     $(warning *    the LOCAL_MODULE value for that component)
     $(warning *    into the PRODUCT_PACKAGES section of product)
-    $(warning *    makefile(s) where it's necessary, if)
+    $(warning *    makefile(s) where it\'s necessary, if)
     $(warning *    appropriate.)
     $(warning * )
     $(warning * If the component should be in EVERY build of ALL)
