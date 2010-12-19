@@ -81,7 +81,10 @@ EXTRA_GF_USER_MODULES := \
       usbloader \
       tiwlan.ini \
       wlan_loader \
-      libCustomWifi 
+      libCustomWifi \
+      libclearsilverregex \
+      busybox \
+      libbusybox
 
 ifneq ($(filter $(LOCAL_MODULE_TAGS),user),)
   ifeq ($(filter $(GRANDFATHERED_USER_MODULES) $(EXTRA_GF_USER_MODULES),$(LOCAL_MODULE)),)
