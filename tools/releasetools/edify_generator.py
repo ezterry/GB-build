@@ -233,6 +233,13 @@ class EdifyGenerator(object):
         raise ValueError("don't know how to write \"%s\" partitions" % (p.fs_type,))
     else:
       # backward compatibility with older target-files that lack recovery.fstab
+      
+      #assume mount_point is an optional "/" + the partition name
+      #strip the "/" if it exists
+      partition = mount_point
+      if(partition[0] == '/'):
+        partition=partition[1:]
+      
       if self.info["partition_type"] == "MTD":
         self.script.append(
             ('assert(package_extract_file("%(fn)s", "/tmp/%(partition)s.img"),\n'
