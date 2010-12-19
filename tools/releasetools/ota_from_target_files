@@ -383,9 +383,12 @@ def WriteFullOTAPackage(input_zip, output_zip):
 
   boot_img = common.File("boot.img", common.BuildBootableImage(
       os.path.join(OPTIONS.input_tmp, "BOOT")))
-  recovery_img = common.File("recovery.img", common.BuildBootableImage(
-      os.path.join(OPTIONS.input_tmp, "RECOVERY")))
-  MakeRecoveryPatch(output_zip, recovery_img, boot_img)
+  try:
+    recovery_img = common.File("recovery.img", common.BuildBootableImage(
+        os.path.join(OPTIONS.input_tmp, "RECOVERY")))
+    MakeRecoveryPatch(output_zip, recovery_img, boot_img)
+  except TypeError,e:
+    print("no recovery; or error generating recovery")
 
   Item.GetMetadata(input_zip)
   Item.Get("system").SetPermissions(script)
