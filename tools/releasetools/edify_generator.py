@@ -178,7 +178,7 @@ class EdifyGenerator(object):
       partition = self.info.get("partition_path", "") + partition
       self.script.append('format("%s", "%s", "%s");' %
                          (self.info["fs_type"], self.info["partition_type"],
-                          partition))
+                          partition.lstrip('/')))
 
   def DeleteFiles(self, file_list):
     """Delete all files in file_list."""
