@@ -44,6 +44,15 @@ Usage:  ota_from_target_files [flags] input_target_files output_ota_package
   -e  (--extra_script)  <file>
       Insert the contents of file at the end of the update script.
 
+  --alt_boot_script <file>
+      exect the following python to inject the boot.img or special
+      logic for installing boot.img into the system
+
+      The scripts enviroment will have two modules pre-loaded:
+        common, edify_generator
+
+      The script must define the function:
+        make_boot_install(script,boot_img,input_zip,output_zip)
 """
 
 import sys
@@ -56,7 +65,7 @@ import copy
 import errno
 import os
 import re
-import sha
+import hashlib
 import subprocess
 import tempfile
 import time
@@ -74,6 +83,7 @@ OPTIONS.patch_threshold = 0.95
 OPTIONS.wipe_user_data = False
 OPTIONS.omit_prereq = False
 OPTIONS.extra_script = None
+OPTIONS.alt_boot_script = None
 OPTIONS.worker_threads = 3
 
 def MostPopularKey(d, default):
@@ -318,7 +328,7 @@ def MakeRecoveryPatch(output_zip, recovery_img, boot_img):
   # we check to see if this recovery has already been installed by
   # testing just the first 2k.
   HEADER_SIZE = 2048
-  header_sha1 = sha.sha(recovery_img.data[:HEADER_SIZE]).hexdigest()
+  header_sha1 = hashlib.new('sha',recovery_img.data[:HEADER_SIZE]).hexdigest()
   sh = """#!/system/bin/sh
 if ! applypatch -c %(recovery_type)s:%(recovery_device)s:%(header_size)d:%(header_sha1)s; then
   log -t recovery "Installing new recovery image"
@@ -395,11 +405,22 @@ def WriteFullOTAPackage(input_zip, output_zip):
   Item.Get("system").SetPermissions(script)
 
   common.CheckSize(boot_img.data, "boot.img", OPTIONS.info_dict)
-  common.ZipWriteStr(output_zip, "boot.img", boot_img.data)
-  script.ShowProgress(0.2, 0)
-
-  script.ShowProgress(0.2, 10)
-  script.WriteRawImage("/boot", "boot.img")
+  
+  if(OPTIONS.alt_boot_script is None):
+    common.ZipWriteStr(output_zip, "boot.img", boot_img.data)
+    script.ShowProgress(0.2, 0)
+    
+    script.ShowProgress(0.2, 10)
+    script.WriteRawImage("/boot", "boot.img")
+  else:
+    alt_global=dict()
+    alt_global['common']=common
+    alt_global['edify_generator'] = edify_generator
+    alt_local=dict()
+    #load module
+    exec(OPTIONS.alt_boot_script,alt_global)
+    #run make_boot_install()
+    alt_global['make_boot_install'](script,boot_img,input_zip,output_zip)
 
   script.ShowProgress(0.1, 0)
   device_specific.FullOTA_InstallEnd()
@@ -505,7 +526,8 @@ def WriteIncrementalOTAPackage(target_zip, source_zip, output_zip):
       verbatim_targets.append((tf.name, tf.size))
     else:
       common.ZipWriteStr(output_zip, "patch/" + tf.name + ".p", d)
-      patch_list.append((tf.name, tf, sf, tf.size, sha.sha(d).hexdigest()))
+      patch_list.append((tf.name, tf, sf, tf.size, 
+                           hashlib.new('sha',d).hexdigest()))
       largest_source_size = max(largest_source_size, sf.size)
 
   source_fp = GetBuildProp("ro.build.fingerprint", source_zip)
@@ -712,6 +734,8 @@ def main(argv):
       OPTIONS.omit_prereq = True
     elif o in ("-e", "--extra_script"):
       OPTIONS.extra_script = a
+    elif o in ("--alt_boot_script"):
+      OPTIONS.alt_boot_script = a
     elif o in ("--worker_threads"):
       OPTIONS.worker_threads = int(a)
     else:
@@ -726,7 +750,8 @@ def main(argv):
                                               "wipe_user_data",
                                               "no_prereq",
                                               "extra_script=",
-                                              "worker_threads="],
+                                              "worker_threads=",
+                                              "alt_boot_script="],
                              extra_option_handler=option_handler)
 
   if len(args) != 2:
@@ -735,6 +760,8 @@ def main(argv):
 
   if OPTIONS.extra_script is not None:
     OPTIONS.extra_script = open(OPTIONS.extra_script).read()
+  if OPTIONS.alt_boot_script is not None:
+    OPTIONS.alt_boot_script = open(OPTIONS.alt_boot_script).read()
 
   print "unzipping target target-files..."
   OPTIONS.input_tmp = common.UnzipTemp(args[0])
