@@ -140,13 +140,6 @@ class EdifyGenerator(object):
                          (p.fs_type, common.PARTITION_TYPES[p.fs_type],
                           p.device, p.mount_point))
       self.mounts.add(p.mount_point)
-    else:
-      what = mount_point.lstrip("/")
-      what = self.info.get("partition_path", "") + what
-      self.script.append('mount("%s", "%s", "%s", "%s");' %
-                         (self.info["fs_type"], self.info["partition_type"],
-                          what, mount_point))
-      self.mounts.add(mount_point)
 
   def UnpackPackageDir(self, src, dst):
     """Unpack a given directory from the OTA package into the given
