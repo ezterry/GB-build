@@ -176,6 +176,8 @@ class EdifyGenerator(object):
     else:
       # older target-files without per-partition types
       partition = self.info.get("partition_path", "") + partition
+      self.script.append('if is_mounted("%s")\nthen\n  unmount("%s");\nendif;'%
+                         (partition,partition))
       self.script.append('format("%s", "%s", "%s");' %
                          (self.info["fs_type"], self.info["partition_type"],
                           partition.lstrip('/')))
