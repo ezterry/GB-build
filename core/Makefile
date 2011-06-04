@@ -1047,11 +1047,11 @@ $(INTERNAL_OTA_PACKAGE_TARGET): $(BUILT_TARGET_FILES_PACKAGE) $(OTATOOLS)
 	$(hide) ./build/tools/releasetools/ota_from_target_files -v \
 	   -p $(HOST_OUT) \
 	   $(if $(BUILD_TARGET_EXTRA_OTABOOT_INSTALL_SCRIPT),                  \
-	      "--alt_boot_script=$(BUILD_TARGET_EXTRA_OTABOOT_INSTALL_SCRIPT)",\
+	      "--alt_boot_script=$(strip $(BUILD_TARGET_EXTRA_OTABOOT_INSTALL_SCRIPT))",\
 	      ) \
 	   -k $(KEY_CERT_PAIR) \
 	   $(if $(BUILD_TARGET_EXTRA_OTA_SCRIPT),   \
-	      "-e $(BUILD_TARGET_EXTRA_OTA_SCRIPT)",\
+	      -e "$(BUILD_TARGET_EXTRA_OTA_SCRIPT)",\
 		  ) \
 	   $(BUILT_TARGET_FILES_PACKAGE) $@
 
