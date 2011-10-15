@@ -44,6 +44,10 @@ Usage:  ota_from_target_files [flags] input_target_files output_ota_package
   -e  (--extra_script)  <file>
       Insert the contents of file at the end of the update script.
 
+  -z  (--packed_ota)
+      Generate a packed (extra compressed) OTA
+      this generates xbin.sqf and xlib.sqf
+
   --alt_boot_script <file>
       exect the following python to inject the boot.img or special
       logic for installing boot.img into the system
@@ -57,6 +61,75 @@ Usage:  ota_from_target_files [flags] input_target_files output_ota_package
 
 import sys
 
+#Non OSS libs to omit form putting in xlib.sqf
+omitlibs = ["libaudioeq.so",
+            "libcamera.so",
+            "libgps.so",
+            "libhtc_acoustic.so",
+            "libhtc_ril.so",
+            "libmm-adspsvc.so",
+            "liboemcamera.so",
+            "libOmxH264Dec.so",
+            "libOmxMpeg4Dec.so",
+            "libOmxVidEnc.so",
+            "libopencorehw.so",
+            "libqcomm_omx.so"]
+#common libs (system is very slow if these are compressed)
+omitlibs += ["libnfc_ndef.so",
+             "libstagefright_enc_common.so",
+             "libstagefright_foundation.so",
+             "libstlport.so",
+             "libjpeg.so",
+             "libstagefright.so",
+             "libstagefright_color_conversion.so",
+             "libstagefright_avc_common.so",
+             "libstagefright_amrnb_common.so",
+             "libemoji.so",
+             "libhardware_legacy.so",
+             "libhardware.so",
+             "libutils.so",
+             "libbinder.so",
+             "libwebcore.so",
+             "libexpat.so",
+             "libsqlite.so",
+             "libmedia.so",
+             "libmedia_jni.so",
+             "libvorbisidec.so",
+             "libsonivox.so",
+             "libsoundpool.so",
+             "libskiagl.so",
+             "libRS.so",
+             "librs_jni.so",
+             "libskia.so",
+             "libgui.so",
+             "libui.so",
+             "libcamera_client.so",
+             "libexif.so",
+             "libacc.so",
+             "libETC1.so",
+             "libEGL.so",
+             "libGLESv2.so",
+             "libGLESv1_CM.so",
+             "libsurfaceflinger_client.so",
+             "libpixelflinger.so",
+             "libdvm.so",
+             "libnativehelper.so",
+             "libandroid_runtime.so",
+             "libicui18n.so",
+             "libicuuc.so",
+             "libnetutils.so",
+             "libwpa_client.so",
+             "libdbus.so",
+             "libbluedroid.so",
+             "libcrypto.so",
+             "libssl.so",
+             "libz.so",
+             "libcutils.so",
+             "liblog.so",
+             "libm.so",
+             "libstdc++.so",
+             "libc.so"]
+
 if sys.hexversion < 0x02040000:
   print >> sys.stderr, "Python 2.4 or newer is required."
   sys.exit(1)
@@ -64,8 +137,10 @@ if sys.hexversion < 0x02040000:
 import copy
 import errno
 import os
+import os.path
 import re
 import hashlib
+import shutil
 import subprocess
 import tempfile
 import time
@@ -85,6 +160,7 @@ OPTIONS.omit_prereq = False
 OPTIONS.extra_script = None
 OPTIONS.alt_boot_script = None
 OPTIONS.worker_threads = 3
+OPTIONS.packed_ota = False
 
 def MostPopularKey(d, default):
   """Given a dict, return the key corresponding to the largest
@@ -273,6 +349,11 @@ def CopySystemFiles(input_zip, output_zip=None,
         fn = info2.filename = "system/" + basefilename
         if substitute and fn in substitute and substitute[fn] is None:
           continue
+        if substitute and (os.path.dirname(fn)+"/*") in substitute:
+          #leave the directory empty; but in existance
+          #also allow sub directories/files
+          if not fn.endswith("/"):
+            continue
         if output_zip is not None:
           if substitute and fn in substitute:
             data = substitute[fn]
@@ -350,12 +431,89 @@ fi
   common.ZipWriteStr(output_zip, "recovery/etc/install-recovery.sh", sh)
   return Item.Get("system/etc/install-recovery.sh", dir=False)
 
+def GenerateSqf(symlinks,input_zip,output_zip):
+  # Generate the xbin.sqf and xlib.sqf
+  # also copy any su from xbin to bin
+  # we also need to account for symlinks being updated
+  # remove any from the list no longer needed
+  xbinfiles=filter(
+    lambda f: os.path.dirname(f) == "SYSTEM/xbin" and f != "SYSTEM/xbin/",
+    input_zip.namelist())
+  xlibfiles=filter(
+    lambda f: os.path.dirname(f) == "SYSTEM/lib" and f != "SYSTEM/lib/",
+    input_zip.namelist())
+  filelist = []
+
+  xbinroot = tempfile.mkdtemp(suffix="-xbin")
+  for fn in xbinfiles:
+    tmppath=os.path.join(xbinroot,os.path.basename(fn))
+    if(IsSymlink(input_zip.getinfo(fn))):
+      os.symlink(input_zip.read(fn),tmppath)
+    elif(os.path.basename(fn) == "su"):
+      os.symlink("/system/bin/su",tmppath)
+      common.ZipWriteStr(output_zip,"system/bin/su",input_zip.read(fn))
+    else:
+      fp=open(tmppath,'wb')
+      fp.write(input_zip.read(fn))
+      fp.close()
+      os.chmod(tmppath,00755)
+    filelist.append(os.path.basename(tmppath))
+
+  #create the xbin.sqf
+  cwd=os.getcwd()
+  os.chdir(xbinroot)
+  common.Run(["mksquashfs",] + filelist + 
+             ["xbin.sqf","-all-root","-noappend"],
+             stdout=subprocess.PIPE).wait()
+  os.chdir(cwd)
+  #add to the zip file
+  fp=open(os.path.join(xbinroot,"xbin.sqf"),'rb')
+  common.ZipWriteStr(output_zip,"system/xbin/xbin.sqf",fp.read())
+  fp.close()
+  #cleanup xbin.sqf
+  shutil.rmtree(xbinroot)
+
+  filelist=[]
+  xlibroot = tempfile.mkdtemp(suffix="-xlib")
+  for fn in xlibfiles:
+    tmppath=os.path.join(xlibroot,os.path.basename(fn))
+    if(os.path.basename(fn) in omitlibs):
+        #skip, so we need to extract it into system
+        info=input_zip.getinfo(fn)
+        info2=copy.copy(info)
+        info2.filename = "system/lib/" + os.path.basename(fn)
+        output_zip.writestr(info2,input_zip.read(fn))
+    elif(not IsSymlink(input_zip.getinfo(fn))):
+      fp=open(tmppath,'wb')
+      fp.write(input_zip.read(fn))
+      fp.close()
+      os.chmod(tmppath,00644)
+      filelist.append(os.path.basename(tmppath))
+
+  #create the xbin.sqf
+  cwd=os.getcwd()
+  os.chdir(xlibroot)
+  common.Run(["mksquashfs",] + filelist +
+             ["xlib.sqf","-all-root","-noappend"],
+             stdout=subprocess.PIPE).wait()
+  os.chdir(cwd)
+  #add to the zip file
+  fp=open(os.path.join(xlibroot,"xlib.sqf"),'rb')
+  common.ZipWriteStr(output_zip,"system/xlib/xlib.sqf",fp.read())
+  fp.close()
+  #cleanup xbin.sqf
+  shutil.rmtree(xlibroot)
+
+  return(filter(lambda f: os.path.dirname(f[1]) != "/system/xbin",symlinks))
 
 def WriteFullOTAPackage(input_zip, output_zip):
   # TODO: how to determine this?  We don't know what version it will
   # be installed on top of.  For now, we expect the API just won't
   # change very often.
   script = edify_generator.EdifyGenerator(3, OPTIONS.info_dict)
+  sysfilter = dict()
+  sysfilter['system/lib/*']=None
+  sysfilter['system/xbin/*']=None
 
   metadata = {"post-build": GetBuildProp("ro.build.fingerprint", input_zip),
               "pre-device": GetBuildProp("ro.product.device", input_zip),
@@ -389,7 +547,12 @@ def WriteFullOTAPackage(input_zip, output_zip):
   script.UnpackPackageDir("recovery", "/system")
   script.UnpackPackageDir("system", "/system")
 
-  symlinks = CopySystemFiles(input_zip, output_zip)
+  if(not OPTIONS.packed_ota):
+    symlinks = CopySystemFiles(input_zip, output_zip)
+  else:
+    symlinks = CopySystemFiles(input_zip, output_zip, sysfilter)
+    symlinks = GenerateSqf(symlinks,input_zip,output_zip)
+
   script.MakeSymlinks(symlinks)
 
   boot_img = common.File("boot.img", common.BuildBootableImage(
@@ -403,6 +566,12 @@ def WriteFullOTAPackage(input_zip, output_zip):
 
   Item.GetMetadata(input_zip)
   Item.Get("system").SetPermissions(script)
+
+  if(OPTIONS.packed_ota):
+    #The squashed  version requires some perm cleanup
+    script.AppendExtra("set_perm(0,0,0644,\"/system/xlib/xlib.sqf\");")
+    script.AppendExtra("set_perm(0,0,0644,\"/system/xbin/xbin.sqf\");")
+    script.AppendExtra("set_perm(0,0,6755,\"/system/bin/su\");")
 
   common.CheckSize(boot_img.data, "boot.img", OPTIONS.info_dict)
   
@@ -738,12 +907,14 @@ def main(argv):
       OPTIONS.alt_boot_script = a
     elif o in ("--worker_threads"):
       OPTIONS.worker_threads = int(a)
+    elif o in ("-z","--packed_ota"):
+      OPTIONS.packed_ota = True
     else:
       return False
     return True
 
   args = common.ParseOptions(argv, __doc__,
-                             extra_opts="b:k:i:d:wne:",
+                             extra_opts="b:k:i:d:wnze:",
                              extra_long_opts=["board_config=",
                                               "package_key=",
                                               "incremental_from=",
@@ -751,7 +922,8 @@ def main(argv):
                                               "no_prereq",
                                               "extra_script=",
                                               "worker_threads=",
-                                              "alt_boot_script="],
+                                              "alt_boot_script=",
+                                              "packed_ota"],
                              extra_option_handler=option_handler)
 
   if len(args) != 2:
