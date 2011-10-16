@@ -140,6 +140,7 @@ import os
 import os.path
 import re
 import hashlib
+import packapk
 import shutil
 import subprocess
 import tempfile
@@ -431,11 +432,14 @@ fi
   common.ZipWriteStr(output_zip, "recovery/etc/install-recovery.sh", sh)
   return Item.Get("system/etc/install-recovery.sh", dir=False)
 
-def GenerateSqf(symlinks,input_zip,output_zip):
+def GenerateSqfAndPackAPK(symlinks,input_zip,output_zip):
   # Generate the xbin.sqf and xlib.sqf
   # also copy any su from xbin to bin
   # we also need to account for symlinks being updated
   # remove any from the list no longer needed
+  apkfiles=filter(
+    lambda f: f.endswith(".apk") and f.startswith("SYSTEM"),
+    input_zip.namelist())
   xbinfiles=filter(
     lambda f: os.path.dirname(f) == "SYSTEM/xbin" and f != "SYSTEM/xbin/",
     input_zip.namelist())
@@ -444,6 +448,12 @@ def GenerateSqf(symlinks,input_zip,output_zip):
     input_zip.namelist())
   filelist = []
 
+  #pack apks before working on sqf
+  for fn in apkfiles:
+    data=packapk.packAPK(input_zip.read(fn),os.path.basename(fn))
+    common.ZipWriteStr(output_zip,"system"+fn[6:],data)
+  
+  #continue making xbin sqf
   xbinroot = tempfile.mkdtemp(suffix="-xbin")
   for fn in xbinfiles:
     tmppath=os.path.join(xbinroot,os.path.basename(fn))
@@ -506,6 +516,97 @@ def GenerateSqf(symlinks,input_zip,output_zip):
 
   return(filter(lambda f: os.path.dirname(f[1]) != "/system/xbin",symlinks))
 
+def OdexFramework(input_zip,output_zip):
+  # if not already odexed odex framwork and key apks
+  # dexopt --preopt core.jar core.odex v=a,o=a,u=y
+  odexList = ["core.jar",
+              "bouncycastle.jar",
+              "ext.jar",
+              "framework.jar",
+              "android.policy.jar",
+              "services.jar",
+              "core-junit.jar",
+              "am.jar",
+              "android.test.runner.jar",
+              "bmgr.jar",
+              "com.android.future.usb.accessory.jar",
+              "com.android.location.provider.jar",
+              "ime.jar",
+              "input.jar",
+              "javax.obex.jar",
+              "monkey.jar",
+              "pm.jar",
+              "sqlite-jdbc.jar",
+              "svc.jar"]
+
+  #get system info
+  orig_bootclasspath=os.getenv("BOOTCLASSPATH")
+  orig_androidroot=os.getenv("ANDROID_ROOT")
+  orig_cwd=os.getcwd()
+  android_prod=os.getenv("ANDROID_PRODUCT_OUT")
+
+  print("Odex Framework: " + android_prod)
+  #create temporary directory
+  tmpworkdir = tempfile.mkdtemp(suffix="-odex")
+
+  classes="core.jar:bouncycastle.jar:ext.jar:framework.jar:android.policy.jar:services.jar:core-junit.jar".split(":")
+  classes=map(lambda a:os.path.join("work/./system/framework",a),classes)
+  os.putenv("BOOTCLASSPATH",":".join(classes))
+  os.putenv("ANDROID_ROOT",os.path.join(tmpworkdir,"work"))
+
+
+  #make the output framework directory
+  outputdir = os.path.join(tmpworkdir,'work')
+  os.mkdir(outputdir)
+  outputdir = os.path.join(tmpworkdir,'work','system')
+  os.mkdir(outputdir)
+  outputdir = os.path.join(tmpworkdir,'work','system','framework')
+  os.mkdir(outputdir)
+
+  outzipfilelist = output_zip.namelist()
+  for zipfile in odexList:
+    zipfile = "system/framework/" + zipfile
+    odexfile = zipfile[:-3]+"odex"
+    print("checking: " + odexfile)
+    if(odexfile in outzipfilelist):
+      #the odex is already generated
+      continue
+    #generate the odex
+
+    #copy the jar(zip) file into the workdir
+    fp=open(os.path.join(tmpworkdir,'work',zipfile),'wb')
+    fp.write(input_zip.read("SYSTEM" + zipfile[6:]))
+    fp.close()
+
+    print("Odex: " + zipfile)
+    #run preopt
+    os.chdir(tmpworkdir)
+    common.Run(["dexopt","--preopt",
+                'work/./'+zipfile,
+                'work/./'+odexfile,"u=y"]
+              ).wait()
+    #remove the classes.dex
+    common.Run(["zip","-d",
+                'work/'+zipfile,"classes.dex"]
+              ).wait()
+    os.chdir(orig_cwd)
+    fp=open(os.path.join(tmpworkdir,'work',zipfile),"rb")
+    common.ZipWriteStr(output_zip,zipfile,fp.read())
+    fp.close()
+    fp=open(os.path.join(tmpworkdir,'work',odexfile),"rb")
+    common.ZipWriteStr(output_zip,odexfile,fp.read())
+    fp.close()
+
+  shutil.rmtree(tmpworkdir)
+  if(orig_bootclasspath is not None):
+    os.putenv("BOOTCLASSPATH",orig_bootclasspath)
+  else:
+    os.unsetenv("BOOTCLASSPATH")
+  if(orig_androidroot is not None):
+    os.putenv("ANDROID_ROOT",orig_androidroot)
+  else:
+    os.unsetenv("ANDROID_ROOT")
+
 def WriteFullOTAPackage(input_zip, output_zip):
   # TODO: how to determine this?  We don't know what version it will
   # be installed on top of.  For now, we expect the API just won't
@@ -551,7 +652,10 @@ def WriteFullOTAPackage(input_zip, output_zip):
     symlinks = CopySystemFiles(input_zip, output_zip)
   else:
     symlinks = CopySystemFiles(input_zip, output_zip, sysfilter)
-    symlinks = GenerateSqf(symlinks,input_zip,output_zip)
+    symlinks = GenerateSqfAndPackAPK(symlinks,input_zip,output_zip)
+    #if not already odex framework
+    OdexFramework(input_zip,output_zip)
+    
 
   script.MakeSymlinks(symlinks)
 
