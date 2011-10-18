@@ -46,6 +46,11 @@ def packAPK(data,name):
     fp.write(data)
     fp.close()
     
+    #determine arsc compression level
+    arsclevel = '9'
+    if(name in ('framework-res.apk','SystemUI.apk')):
+        arsclevel = '0'
+
     #write compression script
     fp=open(os.path.join(tmproot,'compress.sh'),'w')
     fp.write("""#!/bin/sh
@@ -55,26 +60,27 @@ cd '%s'
 cert='%s'
 #key of the package
 key='%s'
+#compression level of resources.arsc
+arsclevel='%s'
 
-unzip work.apk resources.arsc
-zip -9 -r work.apk resources.arsc
+unzip work.apk resources.arsc > /dev/null
+zip -$arsclevel -r work.apk resources.arsc > /dev/null
 rm resources.arsc
-unzip work.apk *.png
+unzip work.apk *.png > /dev/null
 
 for png in `find ./ | grep png$`
 do
-    echo crushing: $png
-    pngcrush $png crush.png >> /dev/null
+    pngcrush $png crush.png > /dev/null
     rm $png
     mv crush.png $png
-    zip -0 -r work.apk $png
+    zip -0 -r work.apk $png > /dev/null
     rm $png
 done
 
 #delete old key
-zip -d work.apk META-INF/MANIFEST.MF
-zip -d work.apk META-INF/CERT.SF
-zip -d work.apk META-INF/CERT.RSA
+zip -d work.apk META-INF/MANIFEST.MF > /dev/null
+zip -d work.apk META-INF/CERT.SF     > /dev/null
+zip -d work.apk META-INF/CERT.RSA    > /dev/null
 
 #resign
 java -jar $ANDROID_BUILD_TOP/out/host/*/framework/signapk.jar \
@@ -82,7 +88,7 @@ java -jar $ANDROID_BUILD_TOP/out/host/*/framework/signapk.jar \
 #realign
 $ANDROID_BUILD_TOP/out/host/*/bin/zipalign 4 work_s.apk work_a.apk
 ls -l work_a.apk
-""" % (tmproot,cert,key))
+""" % (tmproot,cert,key,arsclevel))
     fp.close()
     #run the above shell script
     os.system("sh " + os.path.join(tmproot,'compress.sh'))
