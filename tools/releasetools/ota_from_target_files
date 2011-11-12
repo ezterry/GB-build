@@ -488,12 +488,14 @@ def GenerateSqfAndPackAPK(symlinks,input_zip,output_zip):
   for fn in xlibfiles:
     tmppath=os.path.join(xlibroot,os.path.basename(fn))
     if(os.path.basename(fn) in omitlibs):
-        #skip, so we need to extract it into system
-        info=input_zip.getinfo(fn)
-        info2=copy.copy(info)
-        info2.filename = "system/lib/" + os.path.basename(fn)
-        output_zip.writestr(info2,input_zip.read(fn))
+      #skip, so we need to extract it into system
+      info=input_zip.getinfo(fn)
+      info2=copy.copy(info)
+      info2.filename = "system/lib/" + os.path.basename(fn)
+      output_zip.writestr(info2,input_zip.read(fn))
     elif(not IsSymlink(input_zip.getinfo(fn))):
+      if(os.path.basename(tmppath) == "libttspico.so"):
+        symlinks.append(("../xlib/libttspico.so","system/lib/libttspico.so"))
       fp=open(tmppath,'wb')
       fp.write(input_zip.read(fn))
       fp.close()
@@ -514,6 +516,7 @@ def GenerateSqfAndPackAPK(symlinks,input_zip,output_zip):
   #cleanup xbin.sqf
   shutil.rmtree(xlibroot)
 
+  symlinks.sort()
   return(filter(lambda f: os.path.dirname(f[1]) != "/system/xbin",symlinks))
 
 def OdexFramework(input_zip,output_zip):
